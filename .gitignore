@@ -1,2 +1,3 @@
 benchmarks
-
+*.swp
+*.out
