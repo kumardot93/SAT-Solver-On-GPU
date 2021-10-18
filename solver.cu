@@ -60,9 +60,8 @@ int cpuSolve(int varCount, int clauseCount, int* clauseStore){
     return satCount;
 }
 
-__global__ void gpuSolver(int varCount, int clauseCount, int* clauseStore){
+__global__ void gpuSolver(int varCount, int clauseCount, int limit, int* clauseStore, int *gpu_sat_count){
     bool result = true;
-    int limit = pow(2, varCount);
     int perIndex = (blockIdx.x << THREAD_PER_BLOCK_log2) + threadIdx.x;
     
     if(perIndex >= limit)
@@ -83,8 +82,7 @@ __global__ void gpuSolver(int varCount, int clauseCount, int* clauseStore){
         result = result  && clauseResult;
     }
     if(result)
-        printf("Found SAT Per\n");
-        //satCount++;
+        atomicAdd(gpu_sat_count, 1);
 }
 
 int main(int argc, char* argv[]){
@@ -133,15 +131,23 @@ int main(int argc, char* argv[]){
         int *gpuClauseStore;
         cudaMalloc(&gpuClauseStore, sizeof(int)*clauseCount*K);
         cudaMemcpy(gpuClauseStore, clauseStore, sizeof(int)*clauseCount*K, cudaMemcpyHostToDevice);    
-
+    
+        int *gpu_sat_count;
+        cudaMalloc(&gpu_sat_count, sizeof(int));
+        cudaMemset(gpu_sat_count, 0, sizeof(int));
+        cudaDeviceSynchronize();
         int limit = pow(2, varCount);
         int threadPerBlock = pow(2, THREAD_PER_BLOCK_log2);
         int noOfBlock = ceil((float)limit / threadPerBlock);
         
         start = clock();
-        gpuSolver<<<noOfBlock, threadPerBlock>>>(varCount, clauseCount, gpuClauseStore);
+        gpuSolver<<<noOfBlock, threadPerBlock>>>(varCount, clauseCount, limit, gpuClauseStore, gpu_sat_count);
         cudaDeviceSynchronize();
         end = clock();
+
+        int *satCount= (int*)malloc(sizeof(int));
+        cudaMemcpy(satCount, gpu_sat_count,  sizeof(int), cudaMemcpyDeviceToHost);
+        printf("\n\nSAT Count = %d\n", *satCount);
     }
     else{
         printf("Invalid Option");
