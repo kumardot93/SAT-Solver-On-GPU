@@ -6,6 +6,7 @@
 #include <time.h>
 
 #define K 3 // K is from K-SAT, currently we are working on 3-SAT
+#define THREAD_PER_BLOCK_log2 10
 
 // current Var Limit is 32;
 
@@ -59,7 +60,38 @@ int cpuSolve(int varCount, int clauseCount, int* clauseStore){
     return satCount;
 }
 
-int main(){
+__global__ void gpuSolver(int varCount, int clauseCount, int* clauseStore){
+    bool result = true;
+    int limit = pow(2, varCount);
+    int perIndex = (blockIdx.x << THREAD_PER_BLOCK_log2) + threadIdx.x;
+    
+    if(perIndex >= limit)
+        return;
+
+    for(int i=0; i<clauseCount; i++){
+    bool clauseResult = false;
+        for(int j=0; j<K; j++){
+            int var = clauseStore[K*i + j];
+            int absVar = abs(var);
+            bool varValue;
+            if(var < 0)
+                varValue = !((perIndex >> (absVar-1))&1);
+            else
+                varValue = (perIndex >> (absVar-1))&1;
+            clauseResult = clauseResult || varValue;
+        }
+        result = result  && clauseResult;
+    }
+    if(result)
+        printf("Found SAT Per\n");
+        //satCount++;
+}
+
+int main(int argc, char* argv[]){
+    if(argc<2){
+        printf("Invalid Options: One options is required to indetity type of execution\n");
+        return 1;
+    }
 
     preProcessing();
 
@@ -91,10 +123,30 @@ int main(){
         printf("\n");
     } */
 
-    start = clock();
-    int satCount =  cpuSolve(varCount, clauseCount, clauseStore);
-    end = clock();
-    printf("\n\nSAT Count = %d\n", satCount);
+    if(strcmp(argv[1], "cpu")==0){  // cpu implementations
+        start = clock();
+        int satCount =  cpuSolve(varCount, clauseCount, clauseStore);
+        end = clock();
+        printf("\n\nSAT Count = %d\n", satCount);
+    }
+    else if(strcmp(argv[1], "gpu") ==0){        // gpu implementations
+        int *gpuClauseStore;
+        cudaMalloc(&gpuClauseStore, sizeof(int)*clauseCount*K);
+        cudaMemcpy(gpuClauseStore, clauseStore, sizeof(int)*clauseCount*K, cudaMemcpyHostToDevice);    
+
+        int limit = pow(2, varCount);
+        int threadPerBlock = pow(2, THREAD_PER_BLOCK_log2);
+        int noOfBlock = ceil((float)limit / threadPerBlock);
+        
+        start = clock();
+        gpuSolver<<<noOfBlock, threadPerBlock>>>(varCount, clauseCount, gpuClauseStore);
+        cudaDeviceSynchronize();
+        end = clock();
+    }
+    else{
+        printf("Invalid Option");
+        return 0;
+    }
 
     double executionTime = (double)(end-start)/CLOCKS_PER_SEC;
     printf("execution Time = %lf\n", executionTime);
